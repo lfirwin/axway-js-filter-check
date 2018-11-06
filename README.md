@@ -40,5 +40,8 @@ Log level defaults to INFO if not specified.  Use DEBUG to display messages duri
 ## Development and Test Platform
 This script was developed and tested using Python v2.7.15.  The version of the API Gateway FED is v7.5.3.  The script was developed on macOS, so it will work with Linux based platforms.  It has not been tested on Windows (and probably won't work due to file pathing).
 
-## None Issues
+## Known Issues
 This script does not deal with nested functions, and may show them as problems.
+
+## Suggestions/Updates
+Feel free to open an issue if you have suggestions, feedback, etc.
