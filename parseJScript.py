@@ -6,6 +6,7 @@ import glob
 import os
 import logging
 from optparse import OptionParser
+from collections import OrderedDict
 
 class my_option_parser(OptionParser):
     def error(self, msg): # ignore unknown arguments
@@ -21,43 +22,62 @@ def parse_options(copyargs):
    return options
 
 
-def parse_js(d, js_vars):
+def parse_js(d, js_vars, depth):
+    # Increment code tree depth
+    depth += 1
+
     # Iterate over the outputted data structure from the parse
     for k, v in d.iteritems():
         if isinstance(v, dict):
             if v.get('type', None):
                 if v['type'] == 'VariableDeclaration': # variable declaration - "var local_var"
-                    js_vars.append(v['kind'] + ' ' + v['declarations'][0]['id']['name'])
-                    logging.debug(v['kind'] + ' ' + v['declarations'][0]['id']['name'])
+                    js_vars.append(v['kind'] + ' ' + v['declarations'][0]['id']['name'] + ':' + str(depth))
+                    logging.debug(v['kind'] + ' ' + v['declarations'][0]['id']['name'] + ':' + str(depth))
                 elif v['type'] == 'AssignmentExpression': # assignment - "local_var = another_var"
                     try:
-                        js_vars.append(v['left']['name'])
-                        logging.debug(v['left']['name'])
+                        js_vars.append(v['left']['name'] + ':' + str(depth - 1))
+                        logging.debug(v['left']['name'] + ':' + str(depth - 1))
                     except KeyError, e:
                         pass
-                parse_js(v, js_vars)
+                parse_js(v, js_vars, depth)
         elif isinstance(v, list):
             for entry in v:
                 if isinstance(entry, dict):
                     if entry.get('type', None):
                         if entry['type'] == 'VariableDeclaration': # variable declaration - "var local_var"
-                            js_vars.append(entry['kind'] + ' ' + entry['declarations'][0]['id']['name'])
-                            logging.debug(entry['kind'] + ' ' + entry['declarations'][0]['id']['name'])
+                            js_vars.append(entry['kind'] + ' ' + entry['declarations'][0]['id']['name'] + ':' + str(depth))
+                            logging.debug(entry['kind'] + ' ' + entry['declarations'][0]['id']['name'] + ':' + str(depth))
                         elif entry['type'] == 'FunctionDeclaration': # function declaration - "function(some_var)"
-                            js_vars.append('function ' + entry['id']['name'])
-                            logging.debug('function ' + entry['id']['name'])
+                            js_vars.append('function ' + entry['id']['name'] + ':' + str(depth))
+                            logging.debug('function ' + entry['id']['name'] + ':' + str(depth))
                             for param in entry['params']:
-                                js_vars.append('var ' + param['name'])
-                                logging.debug('var ' + param['name'])
+                                js_vars.append('var ' + param['name'] + ':' + str(depth + 1))
+                                logging.debug('var ' + param['name'] + ':' + str(depth + 1))
                         elif entry['type'] == 'IfStatement': # if statement
-                            parse_js(entry['consequent'], js_vars)
+                            js_vars.append('if statement' + ':' + str(depth))
+                            logging.debug('if statement' + ':' + str(depth))
+                            parse_js(entry['consequent'], js_vars, depth)
                             if entry.get('alternate',None):
-                                parse_js(entry['alternate'], js_vars)
+                                parse_js(entry['alternate'], js_vars, depth)
+                        elif entry['type'] == 'ForStatement': # if statement
+                            js_vars.append('for statement' + ':' + str(depth))
+                            logging.debug('for statement' + ':' + str(depth))
+                        elif entry['type'] == 'DoWhileStatement': # if statement
+                            js_vars.append('dowhile statement' + ':' + str(depth))
+                            logging.debug('dowhile statement' + ':' + str(depth))
+                        elif entry['type'] == 'WhileStatement': # if statement
+                            js_vars.append('while statement' + ':' + str(depth))
+                            logging.debug('while statement' + ':' + str(depth))
                         elif entry['type'] == 'AssignmentExpression': # assignment - "local_var = another_var"
-                            js_vars.append(entry['left']['name'])
-                            logging.debug(entry['left']['name'])
-                        if entry['type'] != 'IfStatement':
-                            parse_js(entry, js_vars)
+                            js_vars.append(entry['left']['name'] + ':' + str(depth - 1))
+                            logging.debug(entry['left']['name'] + ':' + str(depth - 1))
+                        if not entry['type'] in ['IfStatement']:
+                            parse_js(entry, js_vars, depth)
+
+
+def get_scope(local_vars):
+    scopes = local_vars.keys()
+    return scopes[-1]
 
 
 def find_parent(soup, parent_pk):
@@ -129,7 +149,6 @@ if __name__ == "__main__":
 
     # Initialize variables
     parsed_filters = []
-    check_filters = []
 
     # Process JavaScript Filters
     for js_filter in js_filters:
@@ -162,20 +181,46 @@ if __name__ == "__main__":
         # Parse the JavaScript
         p = PyJsParser()
         res = p.parse(parsed_filter['script'])
-        logging.critical(json.dumps(res,indent=4))
-        parse_js(res, parsed_filter['js_vars'])
+        #logging.critical(json.dumps(res,indent=4))
+        parse_js(res, parsed_filter['js_vars'], -1)
         logging.debug(parsed_filter['js_vars'])
 
         # Check variables are declared as local
-        local_vars = []
+        local_vars = OrderedDict()
+        local_vars["script:0"] = []
         for js_var in parsed_filter['js_vars']:
-            if js_var.startswith('function '):
-                local_vars = []
-            elif js_var.startswith('var '):
-                local_vars.append(js_var.split()[1])
-            elif not js_var in local_vars:
-                logging.debug('ALERT: Script may have missing "var" before variable "' + js_var + '"')
-                parsed_filter['alerts'].append(js_var)
+            this_depth = int(js_var.split(':')[1])
+            scope = get_scope(local_vars)
+            scope_depth = int(scope.split(':')[1])
+            scope_name = scope.split(':')[0]
+            logging.debug(js_var)
+            if this_depth >= scope_depth:
+                if this_depth == scope_depth and scope_name.split()[0] == 'function':
+                    logging.debug('trigger: ' + js_var)
+                    local_vars.popitem()
+                    logging.debug(local_vars)
+            else: # this_depth < scope_depth
+                logging.debug('depth less: ' + js_var)
+                popped_scope = local_vars.popitem()
+                logging.debug(local_vars)
+
+            if js_var.startswith('var '):
+                local_vars[scope].append(js_var.split(':')[0].split()[1])
+                logging.debug(local_vars)
+            elif js_var.split()[0] == 'function':
+                local_vars[js_var] = []
+                logging.debug('new local_vars after push:')
+                logging.debug(local_vars)
+            elif js_var.split()[0] in ['if','dowhile','while','for']:
+                continue
+            else:
+                found = False
+                for s, v in local_vars.items():
+                    if js_var.split(':')[0] in v:
+                        found = True
+                if not found:
+                    logging.info('Possible Global variable "' + js_var.split(':')[0] + '" in ' + get_scope(local_vars).split(':')[0])
+                    parsed_filter['alerts'].append(js_var.split(':')[0] + ':' + get_scope(local_vars).split(':')[0])
         parsed_filters.append(parsed_filter)
         logging.debug('=======================================================\n')
 
@@ -190,9 +235,9 @@ if __name__ == "__main__":
             print parsed_filter['script']
             print
             for js_var in parsed_filter['alerts']:
-                print 'ALERT: Missing "var" before variable "' + js_var + '"'
+                print 'Possible Global variable "' + js_var.split(':')[0] + '" in ' + js_var.split(':')[1]
             if parsed_filter['script_type'] != 'nashorn':
-                print 'ALERT: JavaScript engine is not nashorn'
+                print 'JavaScript engine is not nashorn'
             print '=====================================================================================\n'
 
     # Exit with appropriate return code
