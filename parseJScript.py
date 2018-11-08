@@ -165,7 +165,7 @@ if __name__ == "__main__":
 
         # Get the script type
         parsed_filter['script_type'] = js_filter.find('fval',attrs={"name":"engineName"}).value.string
-        logging.debug('Engine name: ' + parsed_filter['name'])
+        logging.debug('Engine name: ' + parsed_filter['script_type'])
         logging.debug('------------------------------------------------------')
 
         # Get the script
